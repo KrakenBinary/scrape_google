@@ -676,30 +676,39 @@ class ProxyHarvester:
         print_success_message(f"Selected {len(best_proxies)} optimal proxies from pool of {len(proxies)}")
         return best_proxies
 
-    def run(self) -> Tuple[List[Dict[str, str]], str, str]:
+    def run(self, country_filter: str = None) -> Tuple[List[Dict[str, str]], int, int]:
         """
         Run the full proxy harvesting process.
         
+        Args:
+            country_filter: Optional country code to filter proxies (overrides instance value)
+            
         Returns:
-            Tuple of (working_proxies, csv_path, json_path)
+            Tuple of (working_proxies, tested_count, total_count)
         """
         try:
+            # Update country filter if provided
+            if country_filter:
+                self.country_filter = country_filter
+                
             print_system_message("Initializing proxy harvesting sequence...")
             print_system_message("Dispatching digital scouts to locate proxies...")
             
             # Scrape proxies from all sources
             all_proxies = self.scrape_all_sources()
+            total_count = len(all_proxies)
             
             if not all_proxies:
                 print_error_message("No proxies found from any source. Extraction failed.")
-                return [], "", ""
+                return [], 0, 0
                 
             # Test all proxies
             working_proxies = self.test_proxies(all_proxies)
+            tested_count = len(all_proxies)
             
             if not working_proxies:
                 print_error_message("No working proxies found. All tested proxies failed validation.")
-                return [], "", ""
+                return [], tested_count, total_count
                 
             # Select best proxies for TryloByte
             best_proxies = self.select_best_proxies(working_proxies)
@@ -711,11 +720,11 @@ class ProxyHarvester:
             print_system_message("Proxy harvesting sequence completed!")
             print_success_message(f"Final results: {len(working_proxies)} working proxies, {len(best_proxies)} optimal proxies selected for TryloByte")
             
-            return best_proxies, csv_path, json_path
+            return best_proxies, tested_count, total_count
             
         except Exception as e:
             print_error_message(f"Proxy harvesting operation failed: {str(e)}")
-            return [], "", ""
+            return [], 0, 0
     
 def main():
     """Run the proxy harvester as a standalone script."""
@@ -736,12 +745,12 @@ def main():
     harvester.timeout = args.timeout
     harvester.max_workers = args.workers
     
-    working_proxies, csv_path, json_path = harvester.run()
+    working_proxies, tested_count, total_count = harvester.run()
     
     if working_proxies:
         fastest = working_proxies[0]
         print_info_message(f"Fastest proxy: {fastest['http']} ({fastest['country']}) - {fastest['response_time']}s")
-
+        print_info_message(f"Total proxies: {total_count}, Tested: {tested_count}, Working: {len(working_proxies)}")
 
 if __name__ == "__main__":
     main()
