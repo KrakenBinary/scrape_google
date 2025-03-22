@@ -1,48 +1,50 @@
-# Python
+# General
 __pycache__/
 *.py[cod]
 *$py.class
-*.so
-.Python
+.env
+.venv
 env/
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-*.egg-info/
-.installed.cfg
-*.egg
-
-# Virtual Environment
 venv/
 ENV/
-
-# Data files - be careful about committing scraped data
-data/*.csv
-data/*.json
-
-# Logs and databases
-*.log
-*.sqlite
-
-# IDE files
+env.bak/
+venv.bak/
 .idea/
 .vscode/
-*.swp
-*.swo
 
-# OS specific files
-.DS_Store
-.DS_Store?
-._*
-.Spotlight-V100
-.Trashes
-ehthumbs.db
-Thumbs.db
+# Distribution / packaging
+dist/
+build/
+*.egg-info/
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
+.pytest_cache/
+
+# Data files
+data/*.csv
+data/*.json
+!data/.gitkeep
+
+# Private keys and security
+*_key
+*_privkey
+*.pem
+*.key
+*id_rsa*
+*id_dsa*
+*id_ecdsa*
+*id_ed25519*
+*identity
+*Trylobyte
+*.pub
+*/.ssh/
+# Add any other private key patterns here

@@ -1,8 +1,0 @@
-{
-  "headless": false,
-  "browser": "chrome",
-  "max_results": 0,
-  "listings_per_proxy": 0,
-  "output_dir": "data",
-  "proxy_test_url": "http://httpbin.org/ip"
-}
