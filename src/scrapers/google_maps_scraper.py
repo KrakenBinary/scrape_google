@@ -155,7 +155,7 @@ class GoogleMapsScraper(BaseScraper):
             # Format query with location if provided
             full_query = f"{query} {location}" if location else query
             
-            # Enter search query
+            # Enter search query - explicitly pass the WebElement, not a boolean
             if not self.browser.send_keys(search_box, full_query):
                 print_error_message("Failed to enter search query")
                 return False
@@ -171,8 +171,21 @@ class GoogleMapsScraper(BaseScraper):
             if search_button and self.browser.click(search_button):
                 print_info_message("Clicked search button")
             else:
-                # Fallback to pressing Enter - make sure to pass the element, not the bool result
-                self.browser.send_keys(search_box, "\n")
+                # Fallback to pressing Enter - need to get the search box element again in case it changed
+                search_box = self.browser.wait_for_element(
+                    self.selectors["search_box"], 
+                    timeout=5
+                )
+                
+                if not search_box:
+                    print_error_message("Search box not found for Enter key")
+                    return False
+                    
+                # Make sure to send Enter key to the actual element
+                if not self.browser.send_keys(search_box, "\n"):
+                    print_error_message("Failed to press Enter key")
+                    return False
+                    
                 print_info_message("Pressed Enter to search")
             
             # Wait for results to load

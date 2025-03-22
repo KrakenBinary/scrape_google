@@ -17,6 +17,7 @@ from selenium.webdriver.chrome.service import Service
 from selenium.common.exceptions import WebDriverException, TimeoutException
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.common.by import By
 
 # Try to import undetected_chromedriver for better anti-bot detection
 try:
@@ -266,35 +267,47 @@ class SeleniumBrowser(BaseBrowser):
             logging.error(f"Error executing script: {str(e)}")
             return None
     
-    def wait_for_element(self, selector: str, by: str = "css", timeout: int = 10) -> bool:
-        """Wait for an element to be present on the page"""
-        if not self.initialized or not self.driver:
-            logging.error("Browser not initialized. Call initialize() first.")
-            return False
+    def wait_for_element(self, selector: str, by: str = "css", timeout: int = 10) -> Optional[Any]:
+        """
+        Wait for an element to be present on the page and return it.
+        
+        Args:
+            selector: Element selector
+            by: Selector type (css, xpath, id, class)
+            timeout: Maximum time to wait in seconds
+            
+        Returns:
+            WebElement if found, None otherwise
+        """
+        if not self.driver:
+            logging.error("Browser not initialized")
+            return None
         
         try:
-            from selenium.webdriver.common.by import By
-            
             by_map = {
                 "css": By.CSS_SELECTOR,
                 "xpath": By.XPATH,
                 "id": By.ID,
-                "class": By.CLASS_NAME
+                "class": By.CLASS_NAME,
+                "name": By.NAME,
+                "tag": By.TAG_NAME,
+                "link_text": By.LINK_TEXT,
+                "partial_link_text": By.PARTIAL_LINK_TEXT
             }
             
             by_type = by_map.get(by.lower(), By.CSS_SELECTOR)
             
-            WebDriverWait(self.driver, timeout).until(
+            element = WebDriverWait(self.driver, timeout).until(
                 EC.presence_of_element_located((by_type, selector))
             )
-            return True
+            return element
             
         except TimeoutException:
             logging.warning(f"Timeout waiting for element: {selector}")
-            return False
+            return None
         except Exception as e:
             logging.error(f"Error waiting for element: {str(e)}")
-            return False
+            return None
     
     def cleanup(self) -> None:
         """Clean up resources"""
@@ -382,8 +395,6 @@ class SeleniumBrowser(BaseBrowser):
             return None
             
         try:
-            from selenium.webdriver.common.by import By
-            
             by_map = {
                 "css": By.CSS_SELECTOR,
                 "xpath": By.XPATH,
@@ -418,8 +429,6 @@ class SeleniumBrowser(BaseBrowser):
             return []
             
         try:
-            from selenium.webdriver.common.by import By
-            
             by_map = {
                 "css": By.CSS_SELECTOR,
                 "xpath": By.XPATH,
