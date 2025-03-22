@@ -117,18 +117,32 @@ class SeleniumBrowser(BaseBrowser):
             options.add_argument("--no-sandbox")
             options.add_argument("--disable-dev-shm-usage")
             
-            # Linux-specific rendering fixes for glitchy windows
+            # Advanced Linux-specific rendering fixes for transparency/freezing issues
             options.add_argument("--disable-gpu")
             options.add_argument("--disable-accelerated-2d-canvas")
             options.add_argument("--disable-accelerated-video-decode")
             options.add_argument("--disable-webgl")
+            options.add_argument("--disable-features=UseOzonePlatform")
+            options.add_argument("--disable-features=VizDisplayCompositor")
+            options.add_argument("--ignore-gpu-blocklist")
+            
+            # Force compositing mode for better visibility
+            options.add_argument("--force-device-scale-factor=1")
+            options.add_argument("--force-color-profile=srgb")
+            
+            # Advanced compositing fixes for Linux transparency
+            options.add_argument("--in-process-gpu")
+            options.add_argument("--disable-gpu-compositing")
+            options.add_argument("--disable-gpu-sandbox")
+            options.add_argument("--disable-software-rasterizer")
             
             # Enable software rendering mode - often helps with Linux display issues
             options.add_argument("--use-gl=swiftshader")
-            options.add_argument("--use-angle=swiftshader")
+            options.add_argument("--use-angle=swangle")
             
-            # Window settings
+            # Window settings - explicit and forced
             options.add_argument("--window-size=1920,1080")
+            options.add_argument("--window-position=0,0")
             options.add_argument("--start-maximized")
             
             # User agent

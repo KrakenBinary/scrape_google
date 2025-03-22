@@ -98,9 +98,32 @@ class GoogleMapsScraper(BaseScraper):
             
             # Extract special browser options
             browser_type = kwargs.get('browser_type', 'chrome')
-            chrome_arguments = kwargs.get('chrome_arguments', {
-                'disable-features': 'VizDisplayCompositor,IsolateOrigins,site-per-process'
-            })
+            
+            # Enhanced Chrome arguments to fix transparency and freezing issues on Linux
+            chrome_arguments = {
+                # Basic rendering fixes
+                'disable-features': 'VizDisplayCompositor,IsolateOrigins,site-per-process',
+                
+                # Aggressive rendering fixes for Linux transparency/freezing issues
+                'disable-gpu': '',
+                'disable-gpu-compositing': '',
+                'disable-gpu-vsync': '',
+                'disable-software-rasterizer': '',
+                'disable-gpu-rasterization': '',
+                
+                # Force compositing mode and layers
+                'force-color-profile': 'srgb',
+                'force-device-scale-factor': '1',
+                
+                # Window and UI fixes
+                'disable-background-networking': '',
+                'disable-default-apps': '',
+                'window-size': '1920,1080',
+                'window-position': '0,0',
+                
+                # User overrides
+                **kwargs.get('chrome_arguments', {})
+            }
             
             # Initialize the browser with our configuration
             success = self.browser.initialize(
