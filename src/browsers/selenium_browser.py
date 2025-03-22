@@ -39,7 +39,7 @@ class SeleniumBrowser(BaseBrowser):
         """Initialize the Selenium browser"""
         super().__init__()
         self.driver = None
-        self.temp_dir = None
+        self.temp_dir = tempfile.mkdtemp()  # Create a temp directory immediately
         self.user_agent = None
         self.proxy = None
         self.headless = False
