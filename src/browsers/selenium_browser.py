@@ -117,12 +117,18 @@ class SeleniumBrowser(BaseBrowser):
             options.add_argument("--no-sandbox")
             options.add_argument("--disable-dev-shm-usage")
             
-            # Better rendering settings to prevent glitched windows
+            # Linux-specific rendering fixes for glitchy windows
             options.add_argument("--disable-gpu")
-            options.add_argument("--disable-software-rasterizer")
-            options.add_argument("--disable-features=VizDisplayCompositor")
+            options.add_argument("--disable-accelerated-2d-canvas")
+            options.add_argument("--disable-accelerated-video-decode")
+            options.add_argument("--disable-webgl")
+            
+            # Enable software rendering mode - often helps with Linux display issues
+            options.add_argument("--use-gl=swiftshader")
+            options.add_argument("--use-angle=swiftshader")
             
             # Window settings
+            options.add_argument("--window-size=1920,1080")
             options.add_argument("--start-maximized")
             
             # User agent
@@ -168,8 +174,10 @@ class SeleniumBrowser(BaseBrowser):
                 service = Service()
                 self.driver = webdriver.Chrome(service=service, options=options)
             
-            # Set window size for better visualization
-            self.driver.maximize_window()
+            # Explicitly set window size for better visualization
+            if not headless:
+                self.driver.maximize_window()
+                self.driver.set_window_position(0, 0)  # Position window at top-left corner
             
             # Set page load timeout
             self.driver.set_page_load_timeout(60)
