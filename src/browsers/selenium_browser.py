@@ -45,7 +45,7 @@ class SeleniumBrowser(BaseBrowser):
         self.headless = False
         self.initialized = False
     
-    def _get_user_agent(self) -> str:
+    def _generate_user_agent(self) -> str:
         """Get a random user agent string"""
         user_agents = [
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/94.0.4606.81 Safari/537.36",
@@ -55,170 +55,129 @@ class SeleniumBrowser(BaseBrowser):
         ]
         return random.choice(user_agents)
     
-    def initialize(self, headless: bool = False, proxy: Optional[Dict[str, str]] = None, 
-                  undetected: bool = True, chrome_arguments: Optional[Dict[str, str]] = None) -> bool:
+    def initialize(self, headless: bool = False, browser_type: str = "chrome", 
+                  chrome_arguments: Optional[Dict[str, str]] = None, 
+                  proxy: Optional[Union[str, Dict[str, str]]] = None) -> bool:
         """
-        Initialize the browser with the given options.
+        Initialize the Selenium browser.
         
         Args:
-            headless: Whether to run in headless mode
-            proxy: Proxy configuration dict with 'http' key
-            undetected: Whether to use undetected_chromedriver
-            chrome_arguments: Additional Chrome arguments to use
+            headless: Run browser in headless mode (no GUI)
+            browser_type: Type of browser to use ('chrome' or 'firefox')
+            chrome_arguments: Additional Chrome arguments
+            proxy: Proxy configuration (string 'host:port' or dict with 'http'/'https' keys)
             
         Returns:
-            bool: True if initialization was successful, False otherwise
+            bool: True if initialization successful
         """
-        self.headless = headless
-        self.proxy = proxy
+        # Create a temporary directory if it doesn't exist
+        if not os.path.exists(self.temp_dir):
+            os.makedirs(self.temp_dir, exist_ok=True)
+            
+        # Set up user agent
+        self.user_agent = self._generate_user_agent()
         
-        # Create a temporary directory for Chrome data
-        self.temp_dir = tempfile.mkdtemp()
-        
-        # Initialize with undetected-chromedriver if available and requested
-        if undetected and UNDETECTED_AVAILABLE:
-            success = self._initialize_undetected(headless, proxy, chrome_arguments)
+        # Set up proxy if provided
+        if proxy:
+            chrome_arguments = chrome_arguments or {}
+            
+            if isinstance(proxy, str):
+                chrome_arguments["proxy-server"] = proxy
+            elif isinstance(proxy, dict):
+                # Handle more complex proxy configurations
+                if "http" in proxy:
+                    chrome_arguments["proxy-server"] = proxy["http"]
+                elif "https" in proxy:
+                    chrome_arguments["proxy-server"] = proxy["https"]
+                    
+        # Initialize the browser
+        if browser_type.lower() == "chrome":
+            success = self._initialize_chrome(headless, chrome_arguments)
+        elif browser_type.lower() == "firefox":
+            logging.warning("Firefox not fully implemented yet, using Chrome")
+            success = self._initialize_chrome(headless, chrome_arguments)
         else:
-            success = self._initialize_standard(headless, proxy, chrome_arguments)
-        
-        self.initialized = success
-        return success
+            logging.error(f"Unsupported browser type: {browser_type}")
+            return False
+            
+        if success:
+            self.initialized = True
+            logging.info(f"Browser initialized successfully (headless: {headless})")
+            return True
+        else:
+            logging.error("Failed to initialize browser")
+            return False
     
-    def _initialize_undetected(self, headless: bool, proxy: Optional[Dict[str, str]], 
-                              chrome_arguments: Optional[Dict[str, str]]) -> bool:
-        """Initialize using undetected-chromedriver for better bot detection avoidance"""
+    def _initialize_chrome(self, headless: bool = False, chrome_arguments: Optional[Dict[str, str]] = None) -> bool:
+        """Initialize Chrome browser"""
         try:
-            options = uc.ChromeOptions()
+            options = webdriver.ChromeOptions()
             
-            # Add proxy if provided
-            if proxy and "http" in proxy:
-                proxy_url = proxy["http"].replace("http://", "")
-                options.add_argument(f'--proxy-server={proxy_url}')
+            # Essential options for stability
+            options.add_argument("--no-sandbox")
+            options.add_argument("--disable-dev-shm-usage")
             
-            # Set user agent
-            self.user_agent = self._get_user_agent()
-            options.add_argument(f'--user-agent={self.user_agent}')
+            # Better rendering settings to prevent glitched windows
+            options.add_argument("--disable-gpu")
+            options.add_argument("--disable-software-rasterizer")
+            options.add_argument("--disable-features=VizDisplayCompositor")
             
-            # Set up browser to avoid glitched windows
-            options.add_argument('--disable-gpu')
-            options.add_argument('--no-sandbox')
-            options.add_argument('--window-size=1280,720')
-            options.add_argument('--disable-dev-shm-usage')
+            # Window settings
+            options.add_argument("--start-maximized")
             
-            # Disable unnecessary extensions and features to improve performance
-            options.add_argument('--disable-extensions')
-            options.add_argument('--disable-infobars')
-            options.add_argument('--disable-notifications')
+            # User agent
+            options.add_argument("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/109.0.0.0 Safari/537.36")
+            
+            # Disable automation flags
+            options.add_experimental_option("excludeSwitches", ["enable-automation"])
+            options.add_experimental_option("useAutomationExtension", False)
+            
+            # Disable unnecessary extensions/features for better performance
+            options.add_argument("--disable-extensions")
+            options.add_argument("--disable-notifications")
+            options.add_argument("--disable-popup-blocking")
             
             # Add additional chrome arguments if provided
             if chrome_arguments:
                 for key, value in chrome_arguments.items():
                     if value:
-                        options.add_argument(f'--{key}={value}')
+                        options.add_argument(f"--{key}={value}")
                     else:
-                        options.add_argument(f'--{key}')
+                        options.add_argument(f"--{key}")
             
-            # Add specific arguments to fix glitched windows
-            options.add_argument('--disable-features=VizDisplayCompositor,IsolateOrigins,site-per-process')
-            options.add_argument('--incognito')
-            
-            # Create browser with the correct headless setting
+            # Try to use undetected_chromedriver if available
             try:
                 if headless:
-                    options.add_argument('--headless=new')
-                
-                self.driver = uc.Chrome(
-                    options=options, 
-                    driver_executable_path=None,
-                    user_data_dir=self.temp_dir,
-                    version_main=None  # Auto-detect Chrome version
-                )
-                
-                # Set window size
-                self.driver.set_window_size(1280, 720)
-                
-                return True
-                
-            except Exception as e:
-                logging.error(f"Failed to initialize undetected Chrome: {str(e)}")
-                logging.info("Trying fallback approach...")
-                
-                # Fallback approach using subprocess to ensure proper cleanup
-                cmd = [
-                    "pkill", "-f", "chrome"
-                ]
-                try:
-                    subprocess.run(cmd, check=False, timeout=10)
-                    time.sleep(1)  # Give Chrome some time to close
-                except Exception:
-                    pass
-                
-                # Try again with a new temp directory
-                self.temp_dir = tempfile.mkdtemp()
-                
-                if headless:
-                    options.add_argument('--headless=new')
+                    options.add_argument("--headless=new")
                 
                 self.driver = uc.Chrome(
                     options=options,
                     driver_executable_path=None,
-                    user_data_dir=self.temp_dir
+                    version_main=None  # Auto-detect Chrome version
                 )
+                logging.info("Using undetected-chromedriver for better anti-bot detection")
+            except Exception as e:
+                logging.warning("undetected_chromedriver not available. Using standard ChromeDriver.")
                 
-                # Set window size
-                self.driver.set_window_size(1280, 720)
+                # Fallback to standard Chrome
+                options.add_argument("--disable-blink-features=AutomationControlled")
                 
-                return True
-                
-        except Exception as e:
-            logging.error(f"Error initializing undetected Chrome browser: {str(e)}")
-            return False
-    
-    def _initialize_standard(self, headless: bool, proxy: Optional[Dict[str, str]], 
-                            chrome_arguments: Optional[Dict[str, str]]) -> bool:
-        """Initialize using standard ChromeDriver"""
-        try:
-            options = Options()
+                if headless:
+                    options.add_argument("--headless=new")
+                    
+                service = Service()
+                self.driver = webdriver.Chrome(service=service, options=options)
             
-            # Add proxy if provided
-            if proxy and "http" in proxy:
-                proxy_url = proxy["http"].replace("http://", "")
-                options.add_argument(f'--proxy-server={proxy_url}')
+            # Set window size for better visualization
+            self.driver.maximize_window()
             
-            # Set user agent
-            self.user_agent = self._get_user_agent()
-            options.add_argument(f'--user-agent={self.user_agent}')
-            
-            # Add standard Chrome options
-            options.add_argument('--disable-gpu')
-            options.add_argument('--no-sandbox')
-            options.add_argument('--disable-extensions')
-            options.add_argument('--disable-dev-shm-usage')
-            options.add_argument('--window-size=1280,720')
-            
-            # Add headless mode if requested
-            if headless:
-                options.add_argument('--headless=new')
-            
-            # Add additional chrome arguments if provided
-            if chrome_arguments:
-                for key, value in chrome_arguments.items():
-                    if value:
-                        options.add_argument(f'--{key}={value}')
-                    else:
-                        options.add_argument(f'--{key}')
-            
-            # Initialize the driver
-            service = Service()
-            self.driver = webdriver.Chrome(service=service, options=options)
-            
-            # Set window size
-            self.driver.set_window_size(1280, 720)
+            # Set page load timeout
+            self.driver.set_page_load_timeout(60)
             
             return True
             
         except Exception as e:
-            logging.error(f"Error initializing standard Chrome browser: {str(e)}")
+            logging.error(f"Error initializing Chrome: {str(e)}")
             return False
     
     def navigate(self, url: str, timeout: int = 30) -> bool:
