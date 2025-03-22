@@ -149,6 +149,17 @@ def main():
         
     except KeyboardInterrupt:
         print_warning_message("\nScraping interrupted by user")
+        
+        # Save any data collected so far
+        if 'scraper' in locals() and hasattr(scraper, 'data') and scraper.data:
+            try:
+                # Generate output filename
+                output_file = scraper.save_data(scraper.data)
+                print_success_message(f"Successfully saved {len(scraper.data)} businesses collected before interruption")
+                print_success_message(f"Data saved to: {output_file}")
+            except Exception as e:
+                print_error_message(f"Error saving data before exit: {str(e)}")
+        
         return 130  # Standard exit code for Ctrl+C
     except Exception as e:
         print_error_message(f"Error during scraping: {str(e)}")

@@ -41,27 +41,33 @@ class GoogleMapsScraper(BaseScraper):
         Initialize the Google Maps Scraper.
         
         Args:
-            output_dir: Directory to save scraped data
-            headless: Run browser in headless mode
-            proxy: Proxy to use for the browser
-            wait_time: Maximum wait time for elements to load
-            scroll_pause_time: Pause time between scrolls
-            max_results: Maximum number of results to scrape
-            browser_type: Type of browser implementation to use
+            output_dir: Directory to save output files
+            headless: Whether to run the browser in headless mode
+            proxy: Proxy configuration for the browser
+            wait_time: Default wait time for page loading
+            scroll_pause_time: Pause between scrolling operations
+            max_results: Maximum number of results to scrape (0 = unlimited)
+            browser_type: Type of browser to use (currently only selenium is supported)
         """
-        super().__init__(output_dir)
-        
+        self.base_url = "https://www.google.com/maps"
+        self.browser = None
+        self.browser_type = browser_type
         self.headless = headless
         self.proxy = proxy
         self.wait_time = wait_time
         self.scroll_pause_time = scroll_pause_time
         self.max_results = max_results
-        self.browser_type = browser_type
         
-        self.browser = None
-        self.base_url = "https://www.google.com/maps"
+        # Create output directory
+        self.output_dir = Path(output_dir)
+        self.output_dir.mkdir(parents=True, exist_ok=True)
         
-        # Selectors for Google Maps elements
+        # Store data collection for graceful exit handling
+        self.data = []
+        self.query = ""
+        self.location = None
+        
+        # Set up selectors for Google Maps
         self.selectors = {
             "search_box": "input#searchboxinput",
             "search_button": "button#searchbox-searchbutton",
@@ -379,6 +385,46 @@ class GoogleMapsScraper(BaseScraper):
             print_error_message(f"Error extracting business data: {str(e)}")
             return None
     
+    def save_data(self, businesses: List[Dict[str, Any]]) -> str:
+        """
+        Save the scraped business data to a JSON file.
+        
+        Args:
+            businesses: List of business data dictionaries
+            
+        Returns:
+            Path to the saved output file
+        """
+        if not businesses:
+            return ""
+            
+        # Create timestamp for the filename
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        
+        # Create a safe filename from the query
+        safe_query = "".join(c if c.isalnum() else "_" for c in self.query)
+        if len(safe_query) > 30:
+            safe_query = safe_query[:30]
+        
+        # Create the output filename
+        output_file = self.output_dir / f"google_maps_{safe_query}_{timestamp}.json"
+        
+        # Prepare the data structure
+        output_data = {
+            "search_query": f"{self.query} {self.location}" if self.location else self.query,
+            "timestamp": timestamp,
+            "count": len(businesses),
+            "businesses": businesses
+        }
+        
+        # Write to file
+        with open(output_file, "w", encoding="utf-8") as f:
+            json.dump(output_data, f, indent=2, ensure_ascii=False)
+        
+        print_success_message(f"Saved {len(businesses)} businesses to {output_file}")
+        
+        return str(output_file)
+    
     def run(self, query: str, location: Optional[str] = None, **kwargs) -> Tuple[List[Dict[str, Any]], str]:
         """
         Run the Google Maps scraper.
@@ -392,7 +438,9 @@ class GoogleMapsScraper(BaseScraper):
             Tuple containing a list of scraped businesses and the output filename
         """
         output_file = ""
-        businesses = []
+        self.data = []  # Reset data collection
+        self.query = query  # Store query for graceful exit
+        self.location = location  # Store location for graceful exit
         
         try:
             # Set up the browser if not already done
@@ -426,35 +474,13 @@ class GoogleMapsScraper(BaseScraper):
                 
                 business_data = self.extract_business_data(element)
                 if business_data:
-                    businesses.append(business_data)
+                    self.data.append(business_data)  # Store in class attribute for graceful exit
             
             # Save results to file
-            if businesses:
-                # Create timestamp for the filename
-                timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-                # Create a safe filename from the query
-                safe_query = "".join(c if c.isalnum() else "_" for c in query)
-                if len(safe_query) > 30:
-                    safe_query = safe_query[:30]
-                
-                # Create the output filename
-                output_file = self.output_dir / f"google_maps_{safe_query}_{timestamp}.json"
-                
-                # Prepare the data structure
-                output_data = {
-                    "search_query": f"{query} {location}" if location else query,
-                    "timestamp": timestamp,
-                    "count": len(businesses),
-                    "businesses": businesses
-                }
-                
-                # Write to file
-                with open(output_file, "w", encoding="utf-8") as f:
-                    json.dump(output_data, f, indent=2, ensure_ascii=False)
-                
-                print_success_message(f"Saved {len(businesses)} businesses to {output_file}")
+            if self.data:
+                output_file = self.save_data(self.data)
             
-            return businesses, str(output_file)
+            return self.data, output_file
             
         except Exception as e:
             print_error_message(f"Error running Google Maps scraper: {str(e)}")
