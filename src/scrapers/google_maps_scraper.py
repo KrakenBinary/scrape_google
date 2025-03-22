@@ -97,7 +97,7 @@ class GoogleMapsScraper(BaseScraper):
             proxy = kwargs.get('proxy', self.proxy)
             
             # Extract special browser options
-            undetected = kwargs.get('undetected', True)
+            browser_type = kwargs.get('browser_type', 'chrome')
             chrome_arguments = kwargs.get('chrome_arguments', {
                 'disable-features': 'VizDisplayCompositor,IsolateOrigins,site-per-process'
             })
@@ -105,9 +105,9 @@ class GoogleMapsScraper(BaseScraper):
             # Initialize the browser with our configuration
             success = self.browser.initialize(
                 headless=headless,
-                proxy=proxy,
-                undetected=undetected,
-                chrome_arguments=chrome_arguments
+                browser_type=browser_type,
+                chrome_arguments=chrome_arguments,
+                proxy=proxy
             )
             
             if not success:
