@@ -5,9 +5,9 @@ import random
 from pathlib import Path
 from typing import Dict, Optional, List
 
-from proxy_harvester import ProxyHarvester
-from google_maps_scraper import GoogleMapsScraper
-from common.logger import (
+from src.proxy_harvester import ProxyHarvester
+from src.scrapers.google_maps_scraper import GoogleMapsScraper
+from src.common.logger import (
     print_system_message,
     print_info_message,
     print_success_message,
@@ -70,6 +70,7 @@ def run_with_proxy(
         True if scraping was successful, False otherwise
     """
     try:
+        # Initialize the scraper with our new modular architecture
         scraper = GoogleMapsScraper(
             output_dir=output_dir,
             headless=headless,
@@ -77,6 +78,7 @@ def run_with_proxy(
             max_results=max_results
         )
         
+        # Run the scraper with the setup and cleanup handled internally
         data, output_file = scraper.run(query, location)
         
         return len(data) > 0 and output_file != ""
@@ -101,40 +103,68 @@ def main():
     
     args = parser.parse_args()
     
-    # Create output directory
+    # Create output directory if it doesn't exist
     output_dir = Path(args.output)
     output_dir.mkdir(parents=True, exist_ok=True)
     
-    # Handle proxy options
+    # Configure proxy usage
+    proxy = None
+    proxies = []
+    
     if args.use_proxy or args.harvest_only:
-        print_system_message("Initializing proxy handling...")
+        print_system_message("Initializing proxy harvesting process...")
         
-        # Load proxies from file if specified
         if args.proxy_file:
-            print_info_message(f"Loading proxies from {args.proxy_file}")
+            # Load proxies from file
+            print_info_message(f"Loading proxies from file: {args.proxy_file}")
             proxies = load_proxies(args.proxy_file, args.proxy_type)
         else:
             # Harvest new proxies
             print_info_message(f"Harvesting new proxies with country filter: {args.country_filter}")
-            harvester = ProxyHarvester(output_dir=str(output_dir), country_filter=args.country_filter)
-            proxies, _, _ = harvester.run()
+            harvester = ProxyHarvester(
+                output_dir=str(output_dir),
+                country_filter=args.country_filter
+            )
+            
+            print_system_message("Launching proxy harvester...")
+            found_proxies, csv_path, json_path = harvester.run()
+            
+            if found_proxies:
+                print_success_message(f"Successfully harvested {len(found_proxies)} proxies")
+                print_info_message(f"Proxies saved to: {json_path}")
+                
+                # Filter proxies by requested type
+                if args.proxy_type != "all":
+                    proxies = [p for p in found_proxies if p.get("anonymity") == args.proxy_type]
+                    print_info_message(f"Using {len(proxies)} {args.proxy_type} proxies from {len(found_proxies)} total")
+                else:
+                    proxies = found_proxies
+            else:
+                print_warning_message("No working proxies found during harvesting")
+    
+    # Exit if we're only harvesting proxies
+    if args.harvest_only:
+        print_success_message("Proxy harvesting completed successfully")
+        return
+    
+    # Select a proxy if available and requested
+    if args.use_proxy and proxies:
+        # Choose the best proxy by response time (with a touch of randomness)
+        sorted_proxies = sorted(proxies, key=lambda x: float(x.get("response_time", 999)))
         
-        if args.harvest_only:
-            print_success_message("Proxy harvesting complete. Exiting.")
-            return
+        # Select from the top 3 proxies (or all if less than 3)
+        top_n = min(3, len(sorted_proxies))
+        selected_index = random.randint(0, top_n - 1) if top_n > 1 else 0
+        proxy = sorted_proxies[selected_index]
         
-        if not proxies:
-            print_error_message("No usable proxies found. Running without proxy.")
-            proxy = None
-        else:
-            # Select a random proxy
-            proxy = random.choice(proxies)
-            print_success_message(f"Selected proxy: {proxy.get('http', 'Unknown')} (Speed: {proxy.get('speed_category', 'Unknown')}, Anonymity: {proxy.get('anonymity', 'Unknown')})")
-    else:
-        proxy = None
+        print_success_message(f"Selected proxy: {proxy.get('http', 'unknown')} - Response time: {proxy.get('response_time', 'unknown')}s")
     
     # Run the scraper
-    print_system_message(f"Starting Google Maps scraper for: {args.query}" + (f" in {args.location}" if args.location else ""))
+    print_system_message(f"Starting Google Maps scraper for query: {args.query}")
+    if args.location:
+        print_info_message(f"Location filter: {args.location}")
+    print_info_message(f"Browser mode: {'Headless' if args.headless else 'Visible'}")
+    print_info_message(f"Maximum results: {args.max_results if args.max_results > 0 else 'Unlimited'}")
     
     success = run_with_proxy(
         query=args.query,
@@ -146,13 +176,13 @@ def main():
     )
     
     if success:
-        print_success_message("Google Maps scraping completed successfully!")
+        print_success_message("Google Maps scraping completed successfully")
     else:
-        print_error_message("Google Maps scraping failed.")
+        print_error_message("Google Maps scraping failed")
         
-        # If using proxy and it failed, try without proxy
-        if proxy:
-            print_info_message("Trying again without proxy...")
+        # Try without proxy if using proxy and failed
+        if args.use_proxy and proxy:
+            print_warning_message("Trying again without proxy...")
             success = run_with_proxy(
                 query=args.query,
                 location=args.location,
@@ -163,9 +193,10 @@ def main():
             )
             
             if success:
-                print_success_message("Google Maps scraping completed successfully without proxy!")
+                print_success_message("Google Maps scraping completed successfully without proxy")
             else:
-                print_error_message("Google Maps scraping failed even without proxy.")
+                print_error_message("Google Maps scraping failed even without proxy")
+
 
 if __name__ == "__main__":
     main()

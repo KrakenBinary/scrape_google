@@ -8,16 +8,15 @@ import time
 import json
 import subprocess
 from pathlib import Path
-from typing import Dict, Any, Optional, List
 import argparse
 import threading
-import click
+import re
 
 # Import the centralized console output module
-from src.console_output import (
+from src.common.logger import (
     print_message, print_with_typing_effect,
     print_system_message, print_info_message, print_warning_message,
-    print_error_message, print_success_message, print_mission_message,
+    print_error_message, print_success_message, 
     system_message, info_message, warning_message, error_message, success_message,
     NEON_GREEN, INFO_CYAN, WARNING_YELLOW, ALERT_RED, SUCCESS_GREEN, RESET
 )
@@ -33,31 +32,19 @@ TRYLOBYTE_ASCII = r"""
                                                                              
 """
 
-HACKER_MESSAGES = [
-    "Initializing cyber protocols...",
-    "Bypassing security measures...",
-    "Establishing neural connection...",
-    "Decrypting access codes...",
-    "Scanning digital perimeter...",
-    "Loading stealth algorithms...",
-    "Activating ghost protocol...",
-    "Engaging quantum interface...",
-    "Bypassing neural firewalls...",
-    "Initializing data extraction routines...",
-]
+# List of configuration options that can be set
+CONFIG_OPTIONS = {
+    "headless": {"type": bool, "default": False, "help": "Run browser in headless mode"},
+    "browser": {"type": str, "default": "chrome", "help": "Browser to use (chrome/firefox)"},
+    "max_results": {"type": int, "default": 0, "help": "Maximum number of results to scrape (0 = unlimited)"},
+    "output_dir": {"type": str, "default": "data", "help": "Directory to store output files"},
+    "proxy_test_url": {"type": str, "default": "http://httpbin.org/ip", "help": "URL to test proxies against"},
+    "target_proxy_count": {"type": int, "default": 10, "help": "Target number of working proxies to find"},
+    "use_proxy": {"type": bool, "default": False, "help": "Use proxies for scraping"},
+    "proxy_file": {"type": str, "default": None, "help": "File containing proxies (one per line)"},
+    "proxy_type": {"type": str, "default": "elite", "help": "Type of proxy to use: elite, anonymous, transparent"}
+}
 
-HACKER_SUCCESS_MESSAGES = [
-    "Access granted! System compromised.",
-    "Matrix connection established successfully.",
-    "Digital barriers neutralized.",
-    "Mainframe access achieved.",
-    "Security protocols bypassed.",
-    "System penetration complete.",
-    "Neural interface synchronized.",
-    "Quantum entanglement successful.",
-    "Digital footprint minimized.",
-    "Stealth protocols engaged.",
-]
 
 class TryloByteCLI:
     """Interactive command-line interface for TryloByte"""
@@ -65,16 +52,9 @@ class TryloByteCLI:
     def __init__(self):
         """Initialize the CLI"""
         self.running = True
-        self.scraper_class = None
-        self.config = {
-            "headless": False,
-            "browser": "chrome",
-            "max_results": 0,
-            "listings_per_proxy": 0,
-            "output_dir": "data",
-            "proxy_test_url": "http://httpbin.org/ip",
-            "target_proxy_count": 10
-        }
+        
+        # Initialize default configuration
+        self.config = {option: details["default"] for option, details in CONFIG_OPTIONS.items()}
         
         # Create data directory if it doesn't exist
         os.makedirs(self.config["output_dir"], exist_ok=True)
@@ -116,14 +96,15 @@ class TryloByteCLI:
                 if command.strip():
                     self.process_command(command.strip())
             except KeyboardInterrupt:
-                self.exit_handler()
-                sys.exit(0)
+                print("")
+                print_warning_message("Received Ctrl+C")
+                if self._confirm_exit():
+                    self.cmd_exit()
             except EOFError:
-                print("\nEnd of input. Terminating session...")
-                self.running = False
-                sys.exit(0)
+                print("")
+                self.cmd_exit()
             except Exception as e:
-                print_with_typing_effect(f"{error_message} Unexpected exception: {e}", color=ALERT_RED)
+                print_error_message(f"Unexpected exception: {e}")
     
     def print_ascii_header(self):
         """Print the ASCII art header for the application."""
@@ -144,861 +125,520 @@ class TryloByteCLI:
         
         # Look up command in the command map
         if command in self.get_command_map():
-            return self.get_command_map()[command](args)
+            result = self.get_command_map()[command](args)
+            if result == "EXIT":
+                self.running = False
         elif command:
             print_error_message(f"Unknown command: {command}", typing_effect=True)
             print_info_message("Type 'help' for available commands.", typing_effect=True)
         
         return True
-
-    def cmd_harvest_proxies(self, args):
+    
+    def cmd_harvest_proxies(self, args: str = ""):
         """Harvest and test proxies for later use"""
-        print_system_message("Initializing proxy harvesting sequence...", typing_effect=True)
-        
+        # Import the proxy harvester
         try:
             from src.proxy_harvester import ProxyHarvester
             
-            # Parse arguments
+            print_system_message("Initializing proxy harvester...")
+            
+            # Parse country filter
             country = "US"  # Default to US
+            if "--country=" in args:
+                country = args.split("--country=")[1].split(" ")[0].strip()
             
-            if " --country=" in f" {args}":
-                for part in args.split():
-                    if part.startswith("--country="):
-                        country = part.split("=")[1].strip()
-                        print_info_message(f"Targeting proxies from: {country}")
+            harvester = ProxyHarvester(output_dir=self.config["output_dir"])
+            print_info_message(f"Harvesting proxies for country: {country}...")
+            print_info_message("This may take a few minutes as we test each proxy...")
             
-            # Create and run the harvester
-            harvester = ProxyHarvester(
-                output_dir=self.config.get("output_dir", "../data"),
-                country_filter=country
-            )
+            # Run the harvester with all the specialized capabilities
+            working_proxies, tested_count, total_count = harvester.run(country_filter=country)
             
-            print_system_message("Dispatching digital scouts to locate proxies...")
-            working_proxies, csv_path, json_path = harvester.run()
+            # Display results
+            print_success_message(f"Proxy harvesting complete!")
+            print_info_message(f"Tested {tested_count} out of {total_count} proxies")
+            print_info_message(f"Found {len(working_proxies)} working proxies")
             
+            # Display some sample proxies
             if working_proxies:
-                print_success_message(f"Proxy harvest successful: {len(working_proxies)} operational proxies identified")
-                print_info_message(f"Data saved to:")
-                print_info_message(f"  CSV: {csv_path}")
-                print_info_message(f"  JSON: {json_path}")
+                print_system_message("Sample of working proxies:")
+                for i, proxy in enumerate(working_proxies[:5]):
+                    anonymity = proxy.get("anonymity", "unknown").upper()
+                    speed = proxy.get("speed", 0)
+                    print_info_message(f"  {i+1}. {proxy['ip']}:{proxy['port']} - {anonymity} - Response: {speed:.2f}s")
                 
-                # Show some stats about the proxies
-                if working_proxies:
-                    fastest = min(working_proxies, key=lambda x: float(x.get('response_time', 999)))
-                    print_success_message(f"Fastest proxy: {fastest.get('http', 'unknown')} ({fastest.get('country', 'unknown')}) - {fastest.get('response_time', 'unknown')}s")
+                print_info_message(f"Proxies saved to: {self.config['output_dir']}/proxies.json")
             else:
-                print_warning_message("Harvesting operation yielded no viable proxies")
-                print_info_message("Try running again later or with a different country filter")
-                
-        except ImportError as e:
-            print_error_message(f"Neural pathways corrupted: {e}", typing_effect=True)
-            print_info_message("Run the 'setup' command to install dependencies", typing_effect=True)
+                print_warning_message("No working proxies found")
+            
+            return True
+            
+        except ImportError:
+            print_error_message("Failed to import proxy harvester. Make sure all dependencies are installed.")
+            return False
         except Exception as e:
-            print_error_message(f"Proxy harvesting operation failed: {e}", typing_effect=True)
+            print_error_message(f"Error harvesting proxies: {str(e)}")
+            return False
     
     def get_command_map(self):
         """Get the command map for this instance"""
         return {
             "help": self.cmd_help,
-            "exit": self.exit_handler,
-            "quit": self.exit_handler,
-            "bye": self.exit_handler,
+            "exit": self.cmd_exit,
+            "quit": self.cmd_exit,
+            "bye": self.cmd_exit,
             "setup": self.cmd_setup,
             "scrape": self.cmd_scrape,
             "search": self.cmd_scrape,  # Alias for scrape
-            "version": self.cmd_version,
-            "update": self.cmd_update,
             "config": self.cmd_config,
-            "about": self.cmd_about,
+            "settings": self.cmd_config,  # Alias for config
+            "set": self.cmd_set,
             "clear": self.cmd_clear,
             "cls": self.cmd_clear,  # Alias for clear
-            "info": self.cmd_info,
-            "dance": self.cmd_easter_egg,
             "harvest": self.cmd_harvest_proxies,
             "proxies": self.cmd_harvest_proxies  # Alias for harvest
         }
+    
+    def cmd_exit(self, args: str = ""):
+        """
+        Exit the application after cleaning up resources.
+        Usage: exit
+        """
+        print_system_message("Terminating connection to the Matrix...")
+        
+        # Clean up any resources
+        self._cleanup_browser_processes()
+        
+        print_system_message("Disconnecting neural interface...")
+        time.sleep(2)
+        print_system_message("TryloByte shutting down. Connection terminated.")
+        self.running = False
+        return "EXIT"
+    
+    def _cleanup_browser_processes(self):
+        """
+        Clean up any browser processes that might be running.
+        This helps prevent zombie processes and resource leaks.
+        Uses standard system tools to avoid dependencies.
+        """
+        import subprocess
+        import os
+        import signal
+        
+        try:
+            print_info_message("Running browser cleanup...")
+            
+            # Clean up Chrome/Chromium processes using pgrep and pkill
+            browser_process_patterns = [
+                "chrome", "chromium", "chromedriver", 
+                "google-chrome", "chromium-browser",
+                "firefox", "geckodriver"
+            ]
+            
+            # First, check if there are any matching processes
+            for pattern in browser_process_patterns:
+                try:
+                    # Use pgrep to find processes matching our pattern
+                    result = subprocess.run(
+                        ["pgrep", "-f", pattern], 
+                        capture_output=True, 
+                        text=True,
+                        check=False
+                    )
+                    
+                    # If we found matching processes
+                    if result.returncode == 0 and result.stdout.strip():
+                        pids = result.stdout.strip().split('\n')
+                        
+                        for pid_str in pids:
+                            try:
+                                pid = int(pid_str)
+                                
+                                # Try to check if this process has our tryloByte in its command line
+                                # to avoid killing unrelated browser processes
+                                cmd_result = subprocess.run(
+                                    ["ps", "-p", str(pid), "-o", "cmd="],
+                                    capture_output=True,
+                                    text=True,
+                                    check=False
+                                )
+                                
+                                cmd_line = cmd_result.stdout.lower()
+                                
+                                # Only kill if it seems to be related to our application
+                                if ("trylobyte" in cmd_line or 
+                                    "google_maps_scraper" in cmd_line or
+                                    "chromedriver" in cmd_line or
+                                    "--remote-debugging-port" in cmd_line):
+                                    
+                                    print_info_message(f"Terminating browser process: {pattern} (PID: {pid})")
+                                    
+                                    # Try graceful termination first
+                                    try:
+                                        os.kill(pid, signal.SIGTERM)
+                                    except:
+                                        # If graceful termination fails, force kill
+                                        try:
+                                            os.kill(pid, signal.SIGKILL)
+                                        except:
+                                            pass
+                            except ValueError:
+                                # Skip invalid PIDs
+                                pass
+                except subprocess.SubprocessError:
+                    pass
+            
+            # Additional cleanup for any zombie Chromedriver or debugging ports
+            for cleanup_pattern in ["chromedriver", "chrome --remote-debugging-port"]:
+                try:
+                    subprocess.run(["pkill", "-f", cleanup_pattern], check=False)
+                except subprocess.SubprocessError:
+                    pass
+            
+            print_success_message("Browser cleanup completed")
+            
+        except Exception as e:
+            print_warning_message(f"Error during browser cleanup: {str(e)}")
+            # Not critical if this fails, so continue with shutdown
     
     def cmd_help(self, args):
         """Show help information"""
         help_text = """
 Available commands:
   help           - Show this help information
-  scrape "query" - Scrape Google Maps for a query
-                   Options: --no-headless, --debug, --disable-proxies
+  scrape <query> - Scrape Google Maps for a query
+                   Options: --location="New York" --max-results=50 --headless|--visible --use-proxy --proxy-file=<file> --proxy-type=<type>
   harvest        - Harvest and test proxies for later use
                    Options: --country=XX (default: US)
   setup          - Install required dependencies
-  config         - View or edit configuration
-  update         - Check for updates
-  version        - Show version information
-  about          - About this program
+  config         - View current configuration
+  set <option> <value> - Set a configuration option
   clear          - Clear the screen
-  info           - System information
   exit           - Exit the program
 """
         print_info_message(help_text, typing_effect=False)
         return True
     
-    def exit_handler(self):
-        """Handle the exit command"""
-        print_system_message("Terminating connection to the Matrix...", typing_effect=True)
-        print_system_message("Disconnecting neural interface...", typing_effect=True)
-        time.sleep(0.5)
-        print_system_message("TryloByte shutting down. Connection terminated.", typing_effect=True)
-        self.running = False
-    
-    def cmd_setup(self):
+    def cmd_setup(self, args=None):
         """Setup the dependencies"""
-        # Check if we're on a Debian-based system
-        debian_based = is_debian_based()
+        print_system_message("Setting up TryloByte environment...", typing_effect=True)
         
-        if check_environment():
-            print_system_message("Digital environment already established.", typing_effect=True)
-            
-            # Check if our required modules are installed
-            missing_modules = []
-            required_modules = [
-                "selenium", "beautifulsoup4", "requests", "urllib3", 
-                "fake_useragent", "colorama", "tqdm", "webdriver_manager"
-            ]
-            
-            # Map package names to import names (for cases where they differ)
-            import_name_map = {
-                "beautifulsoup4": "bs4",
-                "webdriver_manager": "webdriver_manager.chrome"  # This is how it's imported in code
-            }
-            
-            # For Debian systems, check system packages first
-            if debian_based:
-                for module in required_modules:
-                    # Map module names for import checking
-                    if module in import_name_map:
-                        import_name = import_name_map[module]
-                    else:
-                        import_name = module.split('[')[0]
-                    
-                    code = f"try:\n    import {import_name}\n    print('True')\nexcept ImportError:\n    print('False')"
-                    result = run_python_code(code)
-                    
-                    if result.strip() != 'True':
-                        missing_modules.append(module)
-            else:
-                # For non-Debian, check in virtual environment
-                for module in required_modules:
-                    if module in import_name_map:
-                        import_name = import_name_map[module]
-                    else:
-                        import_name = module.split('[')[0]
-                        
-                    success, _ = run_in_venv(f"import {import_name}")
-                    if not success:
-                        missing_modules.append(module)
-            
-            if missing_modules:
-                print_warning_message(f"Neural interface detected these missing components: {', '.join(missing_modules)}", typing_effect=True)
-                
-                if debian_based:
-                    print_system_message("Debian-based system detected.", typing_effect=True)
-                    
-                    # Separate apt packages and pip packages
-                    apt_packages = []
-                    pip_packages = []
-                    
-                    for module in missing_modules:
-                        apt_package = get_apt_package_name(module)
-                        if check_apt_package_exists(apt_package):
-                            apt_packages.append(apt_package)
-                        else:
-                            # These packages might need to be installed via pip
-                            pip_packages.append(module)
-                    
-                    if apt_packages:
-                        print_info_message("To install available system packages, run:", typing_effect=True)
-                        print_system_message(f"sudo apt-get install -y {' '.join(apt_packages)}", typing_effect=True)
-                    
-                    if pip_packages:
-                        print_info_message("Some packages are not available in the Debian repositories.", typing_effect=True)
-                        print_info_message("To install them with pip (in an externally managed environment), run:", typing_effect=True)
-                        print_system_message(f"sudo pip3 install {' '.join(pip_packages)} --break-system-packages", typing_effect=True)
-                        print_warning_message("Note: Using --break-system-packages is generally discouraged but may be necessary.", typing_effect=True)
-                        print_info_message("Alternatively, you can set up a virtual environment:", typing_effect=True)
-                        print_system_message("python3 -m venv venv", typing_effect=True)
-                        print_system_message("source venv/bin/activate", typing_effect=True)
-                        print_system_message(f"pip install {' '.join(pip_packages)}", typing_effect=True)
-                    
-                    print_info_message("After installing the packages, run this program again.", typing_effect=True)
-                else:
-                    print_system_message("Attempting to install missing components...", typing_effect=True)
-                    # Use virtual environment's pip
-                    if os.name == 'nt':
-                        pip_path = os.path.join("venv", "Scripts", "pip")
-                    else:
-                        pip_path = os.path.join("venv", "bin", "pip")
-                        
-                    for module in missing_modules:
-                        print_info_message(f"Installing module: {module}", typing_effect=True)
-                        try:
-                            subprocess.run([pip_path, "install", module], check=True, capture_output=True)
-                            print_info_message(f"Successfully installed: {module}", typing_effect=True)
-                        except subprocess.CalledProcessError as e:
-                            print_error_message(f"Failed to install {module}: {e.stderr}", typing_effect=True)
-                
-                print_success_message("Neural interface components setup complete.", typing_effect=True)
-            else:
-                print_success_message("All neural interface components are installed.", typing_effect=True)
-        elif debian_based:
-            # Set up Debian system with apt
-            print_system_message("Debian-based system detected.", typing_effect=True)
-            
-            # Required packages
-            required_modules = [
-                "selenium", "beautifulsoup4", "requests", "urllib3", 
-                "fake_useragent", "colorama", "tqdm", "webdriver_manager"
-            ]
-            
-            # Separate apt packages and pip packages
-            apt_packages = []
-            pip_packages = []
-            
-            for module in required_modules:
-                apt_package = get_apt_package_name(module)
-                if check_apt_package_exists(apt_package):
-                    apt_packages.append(apt_package)
-                else:
-                    # These packages might need to be installed via pip
-                    pip_packages.append(module)
-            
-            if apt_packages:
-                print_info_message("To install available system packages, run:", typing_effect=True)
-                print_system_message(f"sudo apt-get install -y {' '.join(apt_packages)}", typing_effect=True)
-            
-            if pip_packages:
-                print_info_message("Some packages are not available in the Debian repositories.", typing_effect=True)
-                print_info_message("To install them with pip (in an externally managed environment), run:", typing_effect=True)
-                print_system_message(f"sudo pip3 install {' '.join(pip_packages)} --break-system-packages", typing_effect=True)
-                print_warning_message("Note: Using --break-system-packages is generally discouraged but may be necessary.", typing_effect=True)
-            
-            print_info_message("After installing the packages, run this program again.", typing_effect=True)
-            
-            # Alternative: try with venv
-            print_info_message("Alternatively, you can set up a virtual environment:", typing_effect=True)
-            print_system_message("python3 -m venv venv", typing_effect=True)
-            print_system_message("source venv/bin/activate", typing_effect=True)
-            print_system_message(f"pip install {' '.join(required_modules)}", typing_effect=True)
-        else:
-            # Fall back to virtual environment setup for non-Debian systems
-            if setup_environment():
-                print_system_message("Neural interface activated. Ready for data extraction.", typing_effect=True)
-        
-        # Import the GoogleMapsScraper class after setup
         try:
-            # Try directly importing first
-            from src.main import GoogleMapsScraper
-            self.scraper_class = GoogleMapsScraper
-            print_success_message("Neural interface libraries loaded successfully.", typing_effect=True)
-        except ImportError as e:
-            print_error_message(f"Failed to import required modules: {e}", typing_effect=True)
-            print_info_message("You may need to restart the program after setup.", typing_effect=True)
+            # Check for required Python packages
+            required_packages = [
+                "selenium", "beautifulsoup4", "requests", "urllib3",
+                "fake_useragent", "colorama", "tqdm", "webdriver_manager"
+            ]
             
-            # Import error details
-            module_name = str(e).split("'")[-2] if "'" in str(e) else str(e)
-            if module_name == "webdriver_manager":
-                print_info_message("The webdriver_manager package is required for Selenium to work properly.", typing_effect=True)
-                if debian_based:
-                    print_info_message("Install it with:", typing_effect=True)
-                    print_system_message("sudo pip3 install webdriver-manager --break-system-packages", typing_effect=True)
+            # Check which packages are missing
+            missing_packages = []
+            for package in required_packages:
+                try:
+                    __import__(package.split('[')[0].replace('-', '_'))
+                except ImportError:
+                    missing_packages.append(package)
+            
+            if missing_packages:
+                print_warning_message(f"Missing packages: {', '.join(missing_packages)}")
+                
+                # Ask user if they want to install
+                print_info_message("Install missing packages? (y/n)")
+                choice = input(f"{NEON_GREEN}>>{RESET} ").lower()
+                
+                if choice.startswith('y'):
+                    print_system_message("Installing missing packages...")
+                    
+                    # Use pip to install packages
+                    try:
+                        subprocess.run([sys.executable, "-m", "pip", "install"] + missing_packages, check=True)
+                        print_success_message("All packages installed successfully!")
+                    except subprocess.CalledProcessError as e:
+                        print_error_message(f"Failed to install packages: {e}")
+                        print_info_message("You may need to install them manually:")
+                        print_info_message(f"pip install {' '.join(missing_packages)}")
+                else:
+                    print_warning_message("Skipping package installation. Some features may not work.")
+            else:
+                print_success_message("All required packages are already installed!")
+                
+            # Check for browser drivers
+            print_system_message("Checking for browser drivers...")
+            
+            # WebDriver Manager will handle driver installation automatically
+            # when the browser is first used, so we just need to inform the user
+            print_info_message("Browser drivers will be installed automatically when needed.")
+            print_success_message("TryloByte setup complete!")
+            
+        except Exception as e:
+            print_error_message(f"Setup failed: {e}")
     
     def cmd_set(self, args: str):
         """Set a configuration option"""
-        parts = args.split(' ', 1)
-        if len(parts) != 2:
-            print_error_message("Invalid syntax. Use: set <option> <value>", typing_effect=True)
-            return
-            
-        option, value = parts
-        option = option.strip().lower()
-        value = value.strip()
-        
-        if option == "headless":
-            if value.lower() == "true":
-                self.config["headless"] = True
-                print_system_message(f"Set headless mode to: {self.config['headless']}", typing_effect=True)
-            elif value.lower() == "false":
-                self.config["headless"] = False
-                print_system_message(f"Set headless mode to: {self.config['headless']}", typing_effect=True)
-            else:
-                print_error_message("Invalid value for headless. Use true/false.", typing_effect=True)
-                
-        elif option == "browser":
-            if value.lower() in ["chrome", "firefox"]:
-                self.config["browser"] = value.lower()
-                print_system_message(f"Set browser to: {self.config['browser']}", typing_effect=True)
-            else:
-                print_error_message("Invalid browser. Use chrome/firefox.", typing_effect=True)
-        
-        elif option == "max_results":
-            try:
-                max_results = int(value)
-                if max_results >= 0:
-                    self.config["max_results"] = max_results
-                    if max_results == 0:
-                        print_system_message("Set max results to: UNLIMITED", typing_effect=True)
-                    else:
-                        print_system_message(f"Set max results to: {self.config['max_results']}", typing_effect=True)
-                else:
-                    print_error_message("Max results must be greater than or equal to 0.", typing_effect=True)
-            except ValueError as e:
-                print_error_message("Max results must be a number.", typing_effect=True)
-        
-        elif option == "listings_per_proxy":
-            try:
-                listings_per_proxy = int(value)
-                if listings_per_proxy >= 0:
-                    self.config["listings_per_proxy"] = listings_per_proxy
-                    if listings_per_proxy == 0:
-                        print_system_message("Set listings per proxy to: UNLIMITED", typing_effect=True)
-                    else:
-                        print_system_message(f"Set listings per proxy to: {self.config['listings_per_proxy']}", typing_effect=True)
-                else:
-                    print_error_message("Listings per proxy must be greater than or equal to 0.", typing_effect=True)
-            except ValueError as e:
-                print_error_message("Listings per proxy must be a number.", typing_effect=True)
-        
-        elif option == "output_dir":
-            self.config["output_dir"] = value
-            print_system_message(f"Set output directory to: {self.config['output_dir']}", typing_effect=True)
-        
-        elif option == "proxy_test_url":
-            self.config["proxy_test_url"] = value
-            print_system_message(f"Set proxy test URL to: {self.config['proxy_test_url']}", typing_effect=True)
-        
-        elif option == "target_proxy_count":
-            try:
-                target_proxy_count = int(value)
-                if target_proxy_count >= 0:
-                    self.config["target_proxy_count"] = target_proxy_count
-                    if target_proxy_count == 0:
-                        print_system_message("Set target proxy count to: UNLIMITED", typing_effect=True)
-                    else:
-                        print_system_message(f"Set target proxy count to: {self.config['target_proxy_count']}", typing_effect=True)
-                else:
-                    print_error_message("Target proxy count must be greater than or equal to 0.", typing_effect=True)
-            except ValueError as e:
-                print_error_message("Target proxy count must be a number.", typing_effect=True)
-        
-        else:
-            print_error_message(f"Unknown configuration option: {option}", typing_effect=True)
-            
-        # Save the updated configuration
-        self.save_config()
-    
-    def cmd_config(self):
-        """Show current configuration"""
-        print_system_message("Current neural interface configuration:", typing_effect=True)
-        for key, value in self.config.items():
-            if key in ["max_results", "listings_per_proxy", "target_proxy_count"] and value == 0:
-                print_info_message(f"  {key}: UNLIMITED", typing_effect=True)
-            else:
-                print_info_message(f"  {key}: {value}", typing_effect=True)
-    
-    def cmd_scrape(self, args: str):
-        """Scrape Google Maps for a query"""
         if not args:
-            print_error_message("No search query provided. Use: scrape \"<query>\"", typing_effect=True)
-            return
+            print_error_message("Missing option and value. Usage: set <option> <value>")
+            return True
         
-        # Parse arguments
-        query = args
+        parts = args.strip().split(' ', 1)
+        if len(parts) < 2:
+            print_error_message("Missing value. Usage: set <option> <value>")
+            return True
         
-        # Check for flags (they would come after the query with spaces)
-        headless_override = None
-        disable_proxies = False
-        debug_mode = False
+        option, value = parts
+        option = option.lower()
         
-        if " --no-headless" in query:
-            query = query.replace(" --no-headless", "")
-            headless_override = False
-            print_info_message("Forcing browser to be visible (no-headless mode)")
+        if option not in CONFIG_OPTIONS:
+            print_error_message(f"Unknown option: {option}")
+            print_info_message(f"Available options: {', '.join(CONFIG_OPTIONS.keys())}")
+            return True
+        
+        # Convert value to the correct type
+        option_type = CONFIG_OPTIONS[option]["type"]
+        try:
+            if option_type == bool:
+                value = value.lower() in ('true', 'yes', 'y', '1', 'on')
+            elif option_type == int:
+                value = int(value)
+            # String type doesn't need conversion
             
-        if " --debug" in query:
-            query = query.replace(" --debug", "")
-            debug_mode = True
-            print_info_message("Debug mode enabled - showing detailed logging")
+            # Update the config
+            self.config[option] = value
             
-        if " --disable-proxies" in query:
-            query = query.replace(" --disable-proxies", "")
-            disable_proxies = True
-            print_warning_message("Proxy usage disabled - using direct connection")
-        
-        # Clean up query (remove quotes)
-        if query.startswith('"') and query.endswith('"'):
-            query = query[1:-1]
-        
-        # Check if the environment is set up
-        if not check_environment():
-            print_system_message("Virtual realm not detected. Initializing setup sequence...", typing_effect=True)
-            if not setup_environment():
-                print_error_message("Failed to materialize digital environment. Aborting.", typing_effect=True)
-                return
-        
-        # Import required modules if not already imported
-        if self.scraper_class is None:
-            # Check if modules exist in the virtual environment
-            success, output = run_in_venv("import src.main")
-            if not success:
-                print_error_message("Critical modules missing. Neural pathways corrupted.", typing_effect=True)
-                print_info_message("Run the 'setup' command to install dependencies.", typing_effect=True)
-                return
-                
-            try:
-                from src.main import GoogleMapsScraper
-                self.scraper_class = GoogleMapsScraper
-            except ImportError as e:
-                print_error_message("Critical modules missing. Neural pathways corrupted.", typing_effect=True)
-                print_info_message("Run the 'setup' command to install dependencies.", typing_effect=True)
-                print_info_message(f"Technical details: {str(e)}", typing_effect=True)
-                return
-        
-        print_mission_message(f"Target acquired: \"{query}\"", typing_effect=True)
-        print_system_message("Initializing neural interface...", typing_effect=True)
-        
-        # Create a thread to handle scraping
-        def scrape_thread():
-            try:
-                # Initialize the scraper with status messages
-                print_system_message("Breaking through digital barriers...")
-                
-                # Override headless mode if specified
-                config_copy = self.config.copy()
-                if headless_override is not None:
-                    config_copy["headless"] = headless_override
-                    print_info_message(f"Headless mode: {'ON' if headless_override else 'OFF (browser will be visible)'}")
-                
-                # Initialize the scraper
-                scraper = self.scraper_class(
-                    output_dir=config_copy["output_dir"],
-                    headless=config_copy["headless"],
-                    browser_type=config_copy["browser"],
-                    max_results=config_copy["max_results"],
-                    listings_per_proxy=config_copy["listings_per_proxy"],
-                    proxy_test_url=config_copy["proxy_test_url"],
-                    target_proxy_count=config_copy["target_proxy_count"]
-                )
-                
-                # Disable proxies if requested
-                if disable_proxies:
-                    scraper.proxy_manager.allow_direct_connection = True
-                    scraper.proxy_manager.consecutive_proxy_failures = 999  # Force direct connection
-                
-                # Enable debug mode if requested
-                if debug_mode:
-                    print_info_message(f"Configuration: {json.dumps(config_copy, indent=2)}")
-                    # Method to print current system environment info
-                    print_info_message(f"Current display: {os.environ.get('DISPLAY', 'Not set')}")
-                
-                # Scrape the query
-                results = scraper.scrape(query)
-                
-                if results:
-                    result_count = len(results)
-                    print_success_message(f"Extraction complete! Harvested {result_count} data packets.", typing_effect=True)
-                    print_system_message(f"Data saved to: {config_copy['output_dir']}/{query.replace(' ', '_').lower()[:30]}.json", typing_effect=True)
-                else:
-                    print_warning_message("Extraction yielded zero results. Security measures may be active.", typing_effect=True)
+            # Save the config
+            self.save_config()
             
-            except Exception as e:
-                print_error_message(f"Digital heist failed: {e}", typing_effect=True)
-                if debug_mode:
-                    import traceback
-                    print_error_message(traceback.format_exc(), typing_effect=True)
-        
-        threading.Thread(target=scrape_thread).start()
+            print_success_message(f"Set {option} = {value}")
             
-        # Rest of the code remains the same...
-
-    def cmd_version(self, args):
-        """Show version information"""
-        print_system_message("TryloByte Digital Reconnaissance System", typing_effect=True)
-        print_info_message("Version: 1.0.0", typing_effect=True)
-        print_info_message("Release Date: 2025-03-22", typing_effect=True)
-        print_info_message("Codename: Digital Recon", typing_effect=True)
+        except ValueError:
+            print_error_message(f"Invalid value for {option}. Expected {option_type.__name__}.")
+        
         return True
     
-    def cmd_update(self, args):
-        """Check for updates"""
-        print_system_message("Scanning deep web for upgrades...", typing_effect=True)
-        time.sleep(1)
-        print_success_message("You are running the latest version of TryloByte.", typing_effect=True)
+    def cmd_config(self, args=None):
+        """Show current configuration"""
+        print_system_message("Current configuration:")
+        
+        for option, value in self.config.items():
+            # Get help text if available
+            help_text = CONFIG_OPTIONS.get(option, {}).get("help", "")
+            print_info_message(f"  {option} = {value}{' - ' + help_text if help_text else ''}")
+        
+        print_info_message("\nUse 'set <option> <value>' to change a setting.")
         return True
     
-    def cmd_about(self, args):
-        """Show information about the program"""
-        about_text = """
-TryloByte - Digital Reconnaissance System
------------------------------------------
-A retro-styled Google Maps scraping tool with intelligent proxy management 
-for gathering data while avoiding detection.
-
-Features:
-- Scrapes business listings from Google Maps
-- Automatically harvests and tests proxies
-- Smart proxy rotation to avoid detection
-- Collects detailed business information
-- Handles rate limiting and detection avoidance
-
-Developed with cyberpunk aesthetics, TryloByte presents complex operations
-in a fun, hacker-movie style interface while performing serious data collection.
-"""
-        print_info_message(about_text, typing_effect=False)
-        return True
-    
-    def cmd_clear(self, args):
+    def cmd_clear(self, args=None):
         """Clear the screen"""
         os.system('cls' if os.name == 'nt' else 'clear')
         self.print_ascii_header()
         return True
     
-    def cmd_info(self, args):
-        """Show system information"""
-        print_system_message("System diagnostics:", typing_effect=True)
+    def cmd_scrape(self, args: str = ""):
+        """
+        Run the Google Maps scraper with the given query.
+        Usage: scrape [query] [--location=City,State] [--visible] [--max=N] [--proxy] [--proxy-file=FILE]
+        """
+        import subprocess
+        import shlex
+        import sys
+        from pathlib import Path
+        import os
         
-        # Python version
-        print_info_message(f"Python version: {sys.version.split()[0]}", typing_effect=True)
+        # Parse out the query and location
+        quoted_query = None
+        location = None
+        max_results = self.config.get("max_results", 0)  # Use config setting by default
+        visible_mode = not self.config.get("headless", False)  # Use config setting
+        use_proxy = self.config.get("use_proxy", False)  # Use config setting
+        proxy_file = self.config.get("proxy_file", None)  # Use config setting
+        proxy_type = self.config.get("proxy_type", "elite")  # Use config setting
         
-        # OS info
-        import platform
-        os_info = platform.platform()
-        print_info_message(f"Operating system: {os_info}", typing_effect=True)
-        
-        # Check for virtual environment
-        in_venv = sys.prefix != sys.base_prefix
-        print_info_message(f"Virtual environment: {'Active' if in_venv else 'Inactive'}", typing_effect=True)
-        
-        # Configuration
-        print_info_message(f"Configuration file: {'Found' if Path('config.json').exists() else 'Not found'}", typing_effect=True)
-        
-        # Data directory
-        data_path = Path(self.config.get("output_dir", "data"))
-        print_info_message(f"Data directory: {data_path.absolute()}", typing_effect=True)
-        print_info_message(f"Data directory exists: {'Yes' if data_path.exists() else 'No'}", typing_effect=True)
-        
-        return True
-    
-    def cmd_easter_egg(self, args):
-        """Easter egg command"""
-        print_system_message("Initiating dance protocol...", typing_effect=True)
-        time.sleep(0.5)
-        
-        dance_frames = [
-            """
-   o
-  /|\\
-  / \\
-""",
-            """
-    o
-   /|\\
-   / \\
-""",
-            """
-     o
-    /|\\
-    / \\
-""",
-            """
-    o
-   /|\\
-   / \\
-""",
-            """
-   o
-  /|\\
-  / \\
-""",
-            """
-  o
- /|\\
- / \\
-"""
-        ]
-        
-        for _ in range(3):
-            for frame in dance_frames:
-                os.system('cls' if os.name == 'nt' else 'clear')
-                print(f"{NEON_GREEN}{frame}{RESET}")
-                time.sleep(0.2)
-        
-        os.system('cls' if os.name == 'nt' else 'clear')
-        self.print_ascii_header()
-        print_success_message("Dance protocol executed successfully!", typing_effect=True)
-        return True
-
-def check_dependencies():
-    """Check if all required dependencies are installed"""
-    required_modules = [
-        "selenium", "beautifulsoup4", "requests", "urllib3", 
-        "fake_useragent", "colorama", "tqdm", "webdriver_manager"
-    ]
-    
-    missing_modules = []
-    
-    # Map package names to import names
-    import_name_map = {
-        "beautifulsoup4": "bs4",
-        "webdriver_manager": "webdriver_manager.chrome"
-    }
-    
-    for module in required_modules:
-        try:
-            if module in import_name_map:
-                import_name = import_name_map[module]
+        # Check for quoted query first
+        if '"' in args:
+            parts = args.split('"')
+            if len(parts) >= 3:
+                quoted_query = parts[1]
+                remaining_args = parts[0] + parts[2]
             else:
-                import_name = module.split('[')[0]
-                
-            code = f"try:\n    import {import_name}\n    print('True')\nexcept ImportError:\n    print('False')"
-            result = run_python_code(code)
-            
-            if result.strip() != 'True':
-                missing_modules.append(module)
-        except Exception:
-            missing_modules.append(module)
-    
-    return missing_modules
-
-def check_environment():
-    """Check if virtual environment is set up"""
-    venv_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "venv")
-    
-    # First check if we're running in the virtual environment
-    in_venv = sys.prefix != sys.base_prefix
-    
-    # If we're not in a venv, check if the venv directory exists
-    if not in_venv and os.path.exists(venv_path):
-        return True
-    
-    # If we're on Debian and not in a venv, check if apt packages are installed
-    if not in_venv and is_debian_based():
-        # Try to import key modules to confirm system-wide installation
-        try:
-            import_attempt = run_python_code(
-                "try:\n"
-                "    import selenium\n"
-                "    import bs4\n"
-                "    import requests\n"
-                "    import colorama\n"
-                "    print('True')\n"
-                "except ImportError:\n"
-                "    print('False')\n"
-            )
-            if import_attempt.strip() == 'True':
-                return True
-        except Exception:
-            pass
-    
-    return in_venv
-
-def run_python_code(code):
-    """Run Python code and return the output"""
-    result = subprocess.run(
-        [sys.executable, "-c", code],
-        capture_output=True,
-        text=True
-    )
-    return result.stdout
-
-def run_in_venv(command):
-    """Run a command in the virtual environment"""
-    if os.name == 'nt':
-        python_path = os.path.join("venv", "Scripts", "python")
-        pip_path = os.path.join("venv", "Scripts", "pip")
-    else:
-        python_path = os.path.join("venv", "bin", "python")
-        pip_path = os.path.join("venv", "bin", "pip")
-    
-    if command.startswith("pip"):
-        cmd_parts = command.split()
-        cmd = [pip_path] + cmd_parts[1:]
-    else:
-        cmd = [python_path, "-c", command]
-    
-    try:
-        result = subprocess.run(cmd, check=True, capture_output=True, text=True)
-        return True, result.stdout
-    except subprocess.CalledProcessError as e:
-        return False, e.stderr
-
-def setup_environment():
-    """Set up the virtual environment"""
-    try:
-        print_system_message("Setting up neural interface. Please wait...", typing_effect=True)
+                remaining_args = args
+        else:
+            remaining_args = args
         
-        # Required packages
-        required_modules = [
-            "selenium", "beautifulsoup4", "requests", "urllib3", 
-            "fake_useragent", "colorama", "tqdm", "webdriver_manager"
+        # Handle the remaining arguments
+        parts = shlex.split(remaining_args)
+        
+        # If we don't have a quoted query yet, use first non-option as query
+        if not quoted_query and parts:
+            non_options = [p for p in parts if not p.startswith("--") and not p.startswith("-")]
+            if non_options:
+                quoted_query = non_options[0]
+                parts.remove(quoted_query)
+        
+        # Process other options - these override config settings
+        for part in parts:
+            if part.startswith("--location="):
+                location = part.split("=", 1)[1]
+            elif part == "--visible":
+                visible_mode = True
+            elif part == "--headless":
+                visible_mode = False
+            elif part.startswith("--max="):
+                try:
+                    max_results = int(part.split("=", 1)[1])
+                except ValueError:
+                    print_warning_message(f"Invalid max results value: {part}")
+            elif part == "--proxy":
+                use_proxy = True
+            elif part == "--no-proxy":
+                use_proxy = False
+            elif part.startswith("--proxy-file="):
+                proxy_file = part.split("=", 1)[1]
+                use_proxy = True
+            elif part.startswith("--proxy-type="):
+                proxy_type = part.split("=", 1)[1]
+                if proxy_type not in ["elite", "anonymous", "all"]:
+                    print_warning_message(f"Invalid proxy type: {proxy_type}. Using elite.")
+                    proxy_type = "elite"
+        
+        if not quoted_query:
+            print_error_message("No query specified")
+            print_info_message("Usage: scrape [query] [--location=City,State] [--visible/--headless] [--max=N] [--proxy/--no-proxy] [--proxy-file=FILE]")
+            return False
+        
+        # Prepare command line arguments
+        cmd = [
+            sys.executable,
+            os.path.join(os.path.dirname(os.path.abspath(__file__)), "run_maps_scraper.py"),
+            quoted_query
         ]
         
-        # Check if we're on a Debian-based system
-        if is_debian_based():
-            print_system_message("Debian-based system detected. Using apt package manager.", typing_effect=True)
+        if location:
+            cmd.extend(["--location", location])
+        
+        if not visible_mode:
+            cmd.append("--headless")
+        
+        if max_results > 0:
+            cmd.extend(["--max-results", str(max_results)])
+        
+        if use_proxy:
+            cmd.append("--use-proxy")
             
-            # Install modules with apt
-            apt_success_count = 0
-            apt_failed_modules = []
+            if proxy_file:
+                cmd.extend(["--proxy-file", proxy_file])
             
-            for module in required_modules:
-                if install_with_apt(module):
-                    apt_success_count += 1
-                else:
-                    apt_failed_modules.append(module)
+            cmd.extend(["--proxy-type", proxy_type])
+        
+        output_dir = self.config.get("output_dir", "data")
+        cmd.extend(["--output", output_dir])
+        
+        print_system_message(f"Starting Google Maps scraping for: {quoted_query}")
+        print_info_message("Press Ctrl+C to stop the scraper at any time")
+        
+        if visible_mode:
+            print_info_message("Running in visible mode - a browser window will open")
+        else:
+            print_info_message("Running in headless mode - no visible browser window")
+        
+        if use_proxy:
+            if proxy_file:
+                print_info_message(f"Using proxies from file: {proxy_file}")
+            else:
+                print_info_message("Using auto-harvested proxies with specialized harvesting capabilities")
+                print_info_message(f"Proxy type: {proxy_type}")
+        
+        try:
+            # Run the scraper with the current environment
+            result = subprocess.run(cmd, check=False)
             
-            if apt_success_count == len(required_modules):
-                print_success_message("All neural interface components installed successfully via apt.", typing_effect=True)
+            if result.returncode == 0:
+                print_success_message("Scraping completed successfully")
                 return True
-            elif apt_success_count > 0:
-                print_warning_message(f"Installed {apt_success_count} out of {len(required_modules)} components via apt.", typing_effect=True)
-                print_info_message(f"Failed modules: {', '.join(apt_failed_modules)}", typing_effect=True)
-                
-                # Try with pip for remaining packages
-                print_system_message("Attempting to install failed modules with pip...", typing_effect=True)
-                
-                pip_success = True
-                for module in apt_failed_modules:
-                    try:
-                        print_info_message(f"Installing {module} with pip...", typing_effect=True)
-                        subprocess.run([sys.executable, "-m", "pip", "install", "--user", module], check=True)
-                        print_success_message(f"Successfully installed {module} with pip", typing_effect=True)
-                    except subprocess.CalledProcessError:
-                        print_error_message(f"Failed to install {module} with pip", typing_effect=True)
-                        pip_success = False
-                
-                return pip_success
-        
-        # Fall back to virtual environment setup if not Debian or apt install failed
-        print_system_message("Setting up Python virtual environment...", typing_effect=True)
-        
-        # Create virtual environment
-        print_system_message("Initializing quantum environment...", typing_effect=True)
-        try:
-            subprocess.run([sys.executable, "-m", "venv", "venv"], check=True)
-        except subprocess.CalledProcessError:
-            print_error_message("Failed to create virtual environment. Trying with user permissions...", typing_effect=True)
-            subprocess.run([sys.executable, "-m", "venv", "--user", "venv"], check=True)
-        
-        # Upgrade pip in the virtual environment
-        print_system_message("Upgrading neural connectors...", typing_effect=True)
-        if os.name == 'nt':
-            pip_path = os.path.join("venv", "Scripts", "pip")
-        else:
-            pip_path = os.path.join("venv", "bin", "pip")
-            
-        try:
-            subprocess.run([pip_path, "install", "--upgrade", "pip"], check=True)
-        except subprocess.CalledProcessError:
-            print_warning_message("Failed to upgrade pip. Continuing with installation...", typing_effect=True)
-        
-        # Install required packages
-        print_system_message("Installing core neural interface components...", typing_effect=True)
-        success_count = 0
-        for module in required_modules:
-            print_info_message(f"Installing module: {module}", typing_effect=True)
-            try:
-                subprocess.run([pip_path, "install", "--user", module], check=True)
-                success_count += 1
-                print_info_message(f"Successfully installed: {module}", typing_effect=True)
-            except subprocess.CalledProcessError as e:
-                try:
-                    # Try without --user flag
-                    subprocess.run([pip_path, "install", module], check=True)
-                    success_count += 1
-                    print_info_message(f"Successfully installed: {module}", typing_effect=True)
-                except subprocess.CalledProcessError:
-                    print_error_message(f"Failed to install {module}. You may need admin privileges.", typing_effect=True)
-        
-        if success_count == len(required_modules):
-            print_success_message("All neural interface components installed successfully.", typing_effect=True)
-        else:
-            print_warning_message(f"Installed {success_count} out of {len(required_modules)} components.", typing_effect=True)
-            print_info_message("You may need to run this script with administrator privileges.", typing_effect=True)
-        
-        return True
-        
-    except subprocess.CalledProcessError as e:
-        print_error_message(f"Failed to set up neural interface: {str(e)}", typing_effect=True)
-        print_info_message("Try running this script with administrator privileges (sudo).", typing_effect=True)
-        return False
-
-def is_debian_based():
-    """Check if the system is Debian/Ubuntu based"""
-    return os.path.exists("/etc/debian_version")
-
-def get_apt_package_name(module_name):
-    """Map Python package names to apt package names"""
-    apt_package_map = {
-        "selenium": "python3-selenium",
-        "beautifulsoup4": "python3-bs4",
-        "requests": "python3-requests",
-        "urllib3": "python3-urllib3",
-        "fake_useragent": "python3-fake-useragent",
-        "colorama": "python3-colorama",
-        "tqdm": "python3-tqdm",
-        "webdriver_manager": "python3-webdriver-manager"  # This may not exist in all repos
-    }
-    return apt_package_map.get(module_name, f"python3-{module_name.replace('_', '-')}")
-
-def check_apt_package_exists(package_name):
-    """Check if a package exists in apt repository"""
-    try:
-        result = subprocess.run(
-            ["apt-cache", "show", package_name],
-            capture_output=True,
-            text=True
-        )
-        return result.returncode == 0
-    except Exception:
-        return False
-
-def install_with_apt(package_name):
-    """Install a package using apt"""
-    try:
-        print_system_message(f"Installing {package_name} using apt...", typing_effect=True)
-        
-        # Map Python package names to apt package names
-        apt_package = get_apt_package_name(package_name)
-        
-        # Print command for user to run manually if sudo fails
-        print_info_message(f"You can manually install this package with: sudo apt-get install -y {apt_package}", typing_effect=True)
-        
-        # We'll attempt a non-interactive check to see if packages exist
-        try:
-            check_cmd = ["apt-cache", "show", apt_package]
-            result = subprocess.run(check_cmd, capture_output=True, text=True)
-            
-            if result.returncode != 0:
-                print_warning_message(f"Package {apt_package} not found in apt repository", typing_effect=True)
+            elif result.returncode == 130:
+                print_warning_message("Scraping was interrupted by user")
+                return False
+            else:
+                print_error_message(f"Scraping failed with exit code: {result.returncode}")
                 return False
                 
-            print_info_message(f"Package {apt_package} is available in apt repository", typing_effect=True)
-            print_info_message("Run the following command to install it:", typing_effect=True)
-            print_info_message(f"sudo apt-get install -y {apt_package}", typing_effect=True)
-                
-            return False  # We're not actually installing it automatically anymore
-        except Exception as e:
-            print_error_message(f"Error checking apt repository: {str(e)}", typing_effect=True)
+        except KeyboardInterrupt:
+            print_warning_message("\nScraping interrupted by user")
             return False
-            
-    except Exception as e:
-        print_error_message(f"Error during apt installation: {str(e)}", typing_effect=True)
-        return False
+        except Exception as e:
+            print_error_message(f"Error running scraper: {str(e)}")
+            return False
+
+    def _confirm_exit(self):
+        """Ask for confirmation before exiting"""
+        try:
+            response = input("\nDo you really want to exit? (y/n): ").strip().lower()
+            return response and response[0] == 'y'
+        except (KeyboardInterrupt, EOFError):
+            return True
+
 
 def main():
-    """Main entry point"""
-    if not check_environment():
-        if not setup_environment():
-            print_error_message("Failed to set up environment.")
-    
-    cli = TryloByteCLI()
-    cli.start()
+    """Main function to run the TryloByte CLI or process command line args"""
+    # Check if arguments were provided
+    if len(sys.argv) > 1:
+        # Parse command line arguments
+        parser = argparse.ArgumentParser(description="TryloByte - Google Maps scraper with retro terminal interface")
+        parser.add_argument("--setup", action="store_true", help="Set up the environment")
+        parser.add_argument("--scrape", metavar="QUERY", help="Scrape Google Maps for the given query")
+        parser.add_argument("--location", help="Location for the search")
+        parser.add_argument("--headless", action="store_true", help="Run in headless mode")
+        parser.add_argument("--visible", action="store_true", help="Run with visible browser window")
+        parser.add_argument("--use-proxy", action="store_true", help="Use proxies for scraping")
+        parser.add_argument("--proxy-file", help="File containing proxies (one per line)")
+        parser.add_argument("--proxy-type", default="elite", help="Type of proxy to use: elite, anonymous, transparent")
+        parser.add_argument("--max-results", type=int, default=0, help="Maximum number of results (0 = unlimited)")
+        parser.add_argument("--harvest", action="store_true", help="Harvest proxies")
+        parser.add_argument("--country", default="US", help="Country filter for proxy harvesting")
+        
+        args = parser.parse_args()
+        
+        # Create CLI instance for configuration
+        cli = TryloByteCLI()
+        
+        # Run requested command
+        if args.setup:
+            cli.cmd_setup()
+        elif args.harvest:
+            cli.cmd_harvest_proxies(f"--country={args.country}")
+        elif args.scrape:
+            # Build scrape command
+            cmd = f'"{args.scrape}"'
+            
+            if args.location:
+                cmd += f' --location="{args.location}"'
+                
+            if args.headless:
+                cmd += " --headless"
+            elif args.visible:
+                cmd += " --visible"
+                
+            if args.max_results > 0:
+                cmd += f" --max-results={args.max_results}"
+                
+            if args.use_proxy:
+                cmd += " --use-proxy"
+                
+                if args.proxy_file:
+                    cmd += f" --proxy-file={args.proxy_file}"
+                
+                cmd += f" --proxy-type={args.proxy_type}"
+            
+            cli.cmd_scrape(cmd)
+            
+            # Keep the script running until the scrape is done
+            try:
+                while threading.active_count() > 1:
+                    time.sleep(0.5)
+            except KeyboardInterrupt:
+                print("\nExiting...")
+    else:
+        # Start interactive CLI
+        cli = TryloByteCLI()
+        cli.start()
+
 
 if __name__ == "__main__":
     main()
