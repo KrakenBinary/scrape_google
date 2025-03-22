@@ -7,10 +7,14 @@ import sys
 import time
 import json
 import subprocess
+import termios
+import tty
+import signal
 from pathlib import Path
 import argparse
 import threading
 import re
+from typing import List, Dict, Optional, Callable, Any, Tuple
 
 # Import the centralized console output module
 from src.common.logger import (
@@ -70,6 +74,11 @@ class TryloByteCLI:
                             self.config[key] = value
             except json.JSONDecodeError:
                 pass
+        
+        # Command history for up/down arrow navigation
+        self.command_history: List[str] = []
+        self.history_position = 0
+        self.max_history = 50  # Maximum number of commands to remember
     
     def save_config(self):
         """Save configuration to a file"""
@@ -90,7 +99,7 @@ class TryloByteCLI:
         while self.running:
             try:
                 # Get user input with styled prompt
-                command = input(f"{NEON_GREEN}>>{RESET} ")
+                command = self.get_command_with_history(f"{NEON_GREEN}>>{RESET} ")
                 
                 # Process command
                 if command.strip():
@@ -566,11 +575,203 @@ Available commands:
             print_error_message(f"Error running scraper: {str(e)}")
             return False
 
+    def get_key(self) -> str:
+        """Get a single keypress from the user."""
+        fd = sys.stdin.fileno()
+        old_settings = termios.tcgetattr(fd)
+        try:
+            tty.setraw(fd)
+            ch = sys.stdin.read(1)
+            
+            # Handle special key sequences (arrow keys, etc.)
+            if ch == '\x1b':  # ESC character
+                # Could be an escape sequence
+                ch1 = sys.stdin.read(1)
+                if ch1 == '[':  # ESC + [ indicates arrow key
+                    ch2 = sys.stdin.read(1)
+                    # Return special key codes
+                    if ch2 == 'A': return 'UP'
+                    if ch2 == 'B': return 'DOWN'
+                    if ch2 == 'C': return 'RIGHT'
+                    if ch2 == 'D': return 'LEFT'
+                    if ch2 == 'H': return 'HOME'
+                    if ch2 == 'F': return 'END'
+                    
+                    # Handle Delete key (ESC [ 3 ~)
+                    if ch2 == '3' and sys.stdin.read(1) == '~':
+                        return 'DELETE'
+                        
+                    return f'ESC[{ch2}'
+                return f'ESC{ch1}'
+            
+            # Handle control characters
+            if ch == '\x7f':  # Backspace
+                return 'BACKSPACE'
+            if ch == '\r' or ch == '\n':  # Enter
+                return 'ENTER'
+            if ch == '\x04':  # Ctrl+D
+                return 'EOF'
+            if ch == '\x03':  # Ctrl+C
+                return 'SIGINT'
+            
+            return ch
+        finally:
+            termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+    
+    def get_command_with_history(self, prompt: str = ">> ") -> str:
+        """
+        Enhanced input handling with command history and cursor movement.
+        Supports:
+        - Up/down arrows to navigate command history
+        - Left/right arrows to move cursor within line
+        - Home/End keys to jump to start/end of line
+        
+        Args:
+            prompt: Text prompt to display
+            
+        Returns:
+            User entered command
+        """
+        current_line = ""
+        cursor_pos = 0
+        history_index = len(self.command_history)
+        saved_current_line = ""
+        
+        # Print initial prompt
+        sys.stdout.write(f"{NEON_GREEN}{prompt}{RESET}")
+        sys.stdout.flush()
+        
+        while True:
+            key = self.get_key()
+            
+            if key == 'ENTER':
+                # Add command to history if not empty and not a duplicate of the most recent command
+                if current_line and (not self.command_history or current_line != self.command_history[-1]):
+                    self.command_history.append(current_line)
+                    # Limit history size
+                    if len(self.command_history) > self.max_history:
+                        self.command_history = self.command_history[-self.max_history:]
+                
+                sys.stdout.write('\n')
+                return current_line
+                
+            elif key == 'UP':
+                # Go back in history
+                if history_index > 0:
+                    # If at the end of history, save current line
+                    if history_index == len(self.command_history):
+                        saved_current_line = current_line
+                    
+                    history_index -= 1
+                    current_line = self.command_history[history_index]
+                    cursor_pos = len(current_line)
+                    
+                    # Redraw the entire line
+                    sys.stdout.write('\r' + ' ' * (len(prompt) + len(current_line) + 10))  # Clear line
+                    sys.stdout.write(f'\r{NEON_GREEN}{prompt}{RESET}{current_line}')
+                    sys.stdout.flush()
+                    
+            elif key == 'DOWN':
+                # Go forward in history
+                if history_index < len(self.command_history):
+                    history_index += 1
+                    if history_index == len(self.command_history):
+                        current_line = saved_current_line
+                    else:
+                        current_line = self.command_history[history_index]
+                    cursor_pos = len(current_line)
+                    
+                    # Redraw the entire line
+                    sys.stdout.write('\r' + ' ' * (len(prompt) + len(current_line) + 10))  # Clear line
+                    sys.stdout.write(f'\r{NEON_GREEN}{prompt}{RESET}{current_line}')
+                    sys.stdout.flush()
+                    
+            elif key == 'LEFT':
+                # Move cursor left
+                if cursor_pos > 0:
+                    cursor_pos -= 1
+                    sys.stdout.write('\b')
+                    sys.stdout.flush()
+                    
+            elif key == 'RIGHT':
+                # Move cursor right
+                if cursor_pos < len(current_line):
+                    sys.stdout.write(current_line[cursor_pos])
+                    cursor_pos += 1
+                    sys.stdout.flush()
+                    
+            elif key == 'HOME':
+                # Move to beginning of line
+                sys.stdout.write('\r' + f"{NEON_GREEN}{prompt}{RESET}")
+                cursor_pos = 0
+                sys.stdout.flush()
+                
+            elif key == 'END':
+                # Move to end of line
+                if cursor_pos < len(current_line):
+                    sys.stdout.write(current_line[cursor_pos:])
+                    cursor_pos = len(current_line)
+                    sys.stdout.flush()
+                    
+            elif key == 'BACKSPACE':
+                # Delete character before cursor
+                if cursor_pos > 0:
+                    # Remove the character from the string
+                    current_line = current_line[:cursor_pos-1] + current_line[cursor_pos:]
+                    cursor_pos -= 1
+                    
+                    # Redraw the entire line
+                    sys.stdout.write('\r' + ' ' * (len(prompt) + len(current_line) + 1))  # Clear line
+                    sys.stdout.write(f'\r{NEON_GREEN}{prompt}{RESET}{current_line}')
+                    
+                    # Move cursor back to position
+                    sys.stdout.write('\r' + f"{NEON_GREEN}{prompt}{RESET}" + current_line[:cursor_pos])
+                    sys.stdout.flush()
+                    
+            elif key == 'DELETE':
+                # Delete character at cursor
+                if cursor_pos < len(current_line):
+                    # Remove the character from the string
+                    current_line = current_line[:cursor_pos] + current_line[cursor_pos+1:]
+                    
+                    # Redraw the entire line
+                    sys.stdout.write('\r' + ' ' * (len(prompt) + len(current_line) + 1))  # Clear line
+                    sys.stdout.write(f'\r{NEON_GREEN}{prompt}{RESET}{current_line}')
+                    
+                    # Move cursor back to position
+                    sys.stdout.write('\r' + f"{NEON_GREEN}{prompt}{RESET}" + current_line[:cursor_pos])
+                    sys.stdout.flush()
+                    
+            elif key == 'SIGINT':
+                # Handle Ctrl+C
+                sys.stdout.write('\n')
+                raise KeyboardInterrupt()
+                
+            elif key == 'EOF':
+                # Handle Ctrl+D
+                sys.stdout.write('\n')
+                raise EOFError()
+                
+            elif len(key) == 1:  # Regular character
+                # Insert character at cursor position
+                current_line = current_line[:cursor_pos] + key + current_line[cursor_pos:]
+                cursor_pos += 1
+                
+                # Write the new character and the rest of the line
+                sys.stdout.write(current_line[cursor_pos-1:])
+                
+                # Move cursor back to position
+                if cursor_pos < len(current_line):
+                    sys.stdout.write('\b' * (len(current_line) - cursor_pos))
+                
+                sys.stdout.flush()
+    
     def _confirm_exit(self):
         """Ask for confirmation before exiting"""
         try:
-            response = input("\nDo you really want to exit? (y/n): ").strip().lower()
-            return response and response[0] == 'y'
+            print_warning_message("Do you really want to exit? (y/n)")
+            response = self.get_command_with_history(f"{NEON_GREEN}>>{RESET} ")
+            return response.lower().startswith('y')
         except (KeyboardInterrupt, EOFError):
             return True
 
